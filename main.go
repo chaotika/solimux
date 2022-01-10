@@ -12,6 +12,7 @@ import (
 
 func main() {
   writerStore := WriterStore{writers: make(map[int64]io.Writer)}
+  writerStore.AddWriter(os.Stdout)
   go NetListenServer("unix",os.Args[1],writerStore)
   LineReader(os.Stdin, writerStore)
 }
@@ -27,15 +28,7 @@ func LineReader(reader io.Reader, writerStore WriterStore) {
   for lineScanner.Scan() {
     line := lineScanner.Bytes()
     if !AssumeJson || json.Valid(line) {
-      writerStore.mutex.Lock()
-      for writerConnectionId, writer := range writerStore.writers {
-        _, err := writer.Write(append(line,"\n"...))
-        if err != nil {
-          log.Printf("write error on #%d:", writerConnectionId, err)
-          delete(writerStore.writers, writerConnectionId);
-        }
-      }
-      writerStore.mutex.Unlock()
+      writerStore.Write(append(line,"\n"...))
     } else {
       log.Printf("invalid JSON",)
     }
@@ -46,6 +39,27 @@ type WriterStore struct {
 	mutex sync.Mutex
   connectionIdCounter int64
 	writers  map[int64]io.Writer
+}
+
+func (writerStore *WriterStore) AddWriter(writer io.Writer)(writerConnectionId int64) {
+	writerStore.mutex.Lock()
+  writerStore.connectionIdCounter++
+  writerConnectionId = writerStore.connectionIdCounter
+  writerStore.writers[writerConnectionId] = writer
+	writerStore.mutex.Unlock()
+  return writerConnectionId
+}
+
+func (writerStore *WriterStore) Write(data []byte) {
+  writerStore.mutex.Lock()
+  for writerConnectionId, writer := range writerStore.writers {
+    _, err := writer.Write(data )
+    if err != nil {
+      log.Printf("write error on #%d:", writerConnectionId, err)
+      delete(writerStore.writers, writerConnectionId);
+    }
+  }
+  writerStore.mutex.Unlock()
 }
 
 func NetListenServer(network, address string, writerStore WriterStore){
@@ -65,11 +79,7 @@ func NetListenServer(network, address string, writerStore WriterStore){
     if err != nil {
         log.Fatal("accept error:", err)
     }
-    writerStore.mutex.Lock()
-    writerStore.connectionIdCounter++
-    writerConnectionId := writerStore.connectionIdCounter
-    writerStore.writers[writerConnectionId] = conn
-    writerStore.mutex.Unlock()
+    writerConnectionId := writerStore.AddWriter(conn)
     log.Printf("Client #%d connected [%s,%s]", writerConnectionId, conn.RemoteAddr().Network(), conn.RemoteAddr().String())
     go LineReader(conn,writerStore)
 
