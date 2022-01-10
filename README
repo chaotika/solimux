@@ -1,1 +1,3 @@
-json-socket-multiplexer
+socket line multiplexer with support for ndjson/JSON Lines
+
+WIP
