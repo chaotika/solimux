@@ -29,7 +29,6 @@ func LineReader(reader io.Reader, writerStore WriterStore) {
     if !AssumeJson || json.Valid(line) {
       writerStore.mutex.Lock()
       for writerConnectionId, writer := range writerStore.writers {
-        log.Println("writerConnectionId:", writerConnectionId, "=>", "writer:", writer)
         _, err := writer.Write(append(line,"\n"...))
         if err != nil {
           log.Printf("write error on #%d:", writerConnectionId, err)
