@@ -9,41 +9,48 @@ import (
   "net"
   "io"
   "bufio"
-  "container/ring"
+  "container/list"
 )
 
+const (
+	MaxScanTokenSize = 1024 * 1024
+)
 var EchoLines bool
 var StdIn bool
 var StdOut bool
 var LineBufferSize int
 var AssumeJson bool
+var RunForever bool
 var ReadoutFileOnConnect string
 
-var connectionsStore ConnectionsStore
+var connectionsList *list.List
 
 func main() {
   flag.BoolVar(&EchoLines, "echo", false, "echo lines back to sender")
   flag.BoolVar(&StdIn, "i", false, "read from stdin")
   flag.BoolVar(&StdOut, "o", false, "output all lines on stdout")
-  flag.IntVar(&LineBufferSize, "linebuf", 128 * 1024 * 1024, "line buffer size in bytes")
+  flag.IntVar(&LineBufferSize, "linebuf", MaxScanTokenSize, "line buffer size in bytes")
   flag.BoolVar(&AssumeJson, "json", false, "verify every line to be valid JSON")
+  flag.BoolVar(&RunForever, "forever", false, "do not end program when stdin is closed")
   flag.StringVar(&ReadoutFileOnConnect, "file", "", "read out file on connection")
   flag.Parse()
-  connectionsStore = ConnectionsStore{connections: make(map[int64]Connection)}
+
+  connectionsList = list.New()
+
   var stdioConnection *Connection
   if StdOut && StdIn {
-    stdioConnection = connectionsStore.ReadWriteConnection(os.Stdin,os.Stdout)
+    stdioConnection = ReadWriteConnection(os.Stdin,os.Stdout)
   } else if !StdOut && StdIn {
-    stdioConnection = connectionsStore.ReadConnection(os.Stdin)
+    stdioConnection = ReadConnection(os.Stdin)
   } else if StdOut && !StdIn {
-    stdioConnection = connectionsStore.WriteConnection(os.Stdout)
-  } else {
-    connectionsStore.connectionIdCounter++
+    stdioConnection = WriteConnection(os.Stdout)
   }
+
   for _, SocketPath := range flag.Args() {
-    go NetListenServer("unix",SocketPath,&connectionsStore)
+    go NetListenServer("unix",SocketPath)
   }
-  if StdIn {
+
+  if StdIn && !RunForever {
     stdioConnection.wg.Wait()
   } else {
     select{ } // wait forever
@@ -51,7 +58,7 @@ func main() {
 
 }
 
-func NetListenServer(network, address string, connectionsStore *ConnectionsStore){
+func NetListenServer(network, address string){
   if err := os.RemoveAll(address); err != nil {
     log.Fatal(err)
   }
@@ -68,100 +75,138 @@ func NetListenServer(network, address string, connectionsStore *ConnectionsStore
     if err != nil {
         log.Fatal("accept error:", err)
     }
-    connectionsStore.ReadWriteConnection(conn,conn)
+    ReadWriteConnection(conn,conn)
     //log.Printf("Client #%d connected [%s,%s]", connection.connectionId, conn.RemoteAddr().Network(), conn.RemoteAddr().String())
   }
 }
 
-func (connectionsStore *ConnectionsStore) ReadConnection(reader io.Reader)(connection *Connection) {
-  connectionsStore.mutex.Lock()
-  connection = connectionsStore.AddConnection(Connection{reader:reader})
-  connection.wg.Add(1)
-  go connection.LineReader()
-  connectionsStore.mutex.Unlock()
-  return connection
-}
-func (connectionsStore *ConnectionsStore) WriteConnection(writer io.Writer)(connection *Connection) {
-  connectionsStore.mutex.Lock()
-  connection = connectionsStore.AddConnection(Connection{writer:writer,writeTo:true})
-  if ReadoutFileOnConnect != "" {
-    connection.ReadoutFile(ReadoutFileOnConnect)
-  }
-  connectionsStore.mutex.Unlock()
-  return connection
-}
-func (connectionsStore *ConnectionsStore) ReadWriteConnection(reader io.Reader, writer io.Writer)(connection *Connection) {
-  connectionsStore.mutex.Lock()
-  connection = connectionsStore.AddConnection(Connection{reader:reader,writer:writer,writeTo:false})
-  connection.wg.Add(1)
-  go connection.LineReader()
-  if ReadoutFileOnConnect != "" {
-    connection.ReadoutFile(ReadoutFileOnConnect)
-  }
-  connection.writeTo = true
-  return connection
-  connectionsStore.mutex.Unlock()
-}
-
-
-func (connectionsStore *ConnectionsStore) Write(data []byte, sourceConnection *Connection) {
-  connectionsStore.mutex.Lock()
-  for connectionId, connection := range connectionsStore.connections {
-    if connection.writeTo && (connectionId != sourceConnection.connectionId || EchoLines)  {
-      _, err := connection.writer.Write(data)
-      if err != nil {
-        log.Printf("write error on #%d:", connectionId, err)
-        delete(connectionsStore.connections, connectionId);
-      }
-    }
-  }
-  connectionsStore.mutex.Unlock()
-}
-
 type Connection struct {
-  connectionId int64
+  id int64
   reader io.Reader
+  readable bool
 	writer io.Writer
-  writeTo bool
+  writechan chan *[]byte
+  writable bool
   wg sync.WaitGroup
+  listElement *list.Element
+}
+
+func ReadConnection(reader io.Reader)(connection *Connection) {
+  connection = &Connection{reader:reader,readable:true}
+  connection.listElement = connectionsList.PushBack(connection)
+  connection.wg.Add(1)
+  go connection.LineReader()
+  return connection
+}
+
+func WriteConnection(writer io.Writer)(connection *Connection) {
+  connection = &Connection{writer:writer,writable:true,writechan: make(chan *[]byte)}
+  connection.listElement = connectionsList.PushBack(connection)
+  if ReadoutFileOnConnect != "" {
+    connection.ReadoutFile(ReadoutFileOnConnect)
+  }
+  go connection.LineWriter()
+  return connection
+}
+
+func ReadWriteConnection(reader io.Reader, writer io.Writer)(connection *Connection) {
+  connection = &Connection{reader:reader,readable:true,writer:writer,writable:true,writechan: make(chan *[]byte)}
+  connection.listElement = connectionsList.PushBack(connection)
+  connection.wg.Add(1)
+  go connection.LineReader()
+  if ReadoutFileOnConnect != "" {
+    connection.ReadoutFile(ReadoutFileOnConnect)
+  }
+  go connection.LineWriter()
+  return connection
 }
 
 func (connection *Connection) LineReader() {
-  lineScanner := bufio.NewScanner(connection.reader)
-  lineScanner.Split(bufio.ScanLines)
-  buf := make([]byte, LineBufferSize)
-  lineScanner.Buffer(buf, LineBufferSize)
-  for lineScanner.Scan() {
-    line := lineScanner.Bytes()
-    if !AssumeJson || json.Valid(line) {
-      connectionsStore.Write(append(line,"\n"...),connection)
-    } else {
-      log.Printf("invalid JSON",)
-    }
-  }
+  connection.LineScanner(connection.reader,
+    func (line *[]byte){
+      ConnectionsWriteLine(line,connection)
+    },
+    func (error string){
+      log.Printf("error LineReader: %s",error)
+    })
   connection.wg.Done()
+  connection.Clean()
 }
 
 func (connection *Connection) ReadoutFile(filename string) {
+  connection.wg.Add(1)
   file, err := os.Open(filename)
   if err != nil {
     log.Printf("ReadoutFile %s error %s",filename,err)
+    connection.wg.Done()
     return
   }
-  lineScanner := bufio.NewScanner(file)
+  connection.LineScanner(file,
+    func (line *[]byte){
+      connection.WriteLineRaw(line)
+    },
+    func (error string){
+      log.Printf("ReadoutFile %s invalid JSON",filename)
+    })
+  connection.wg.Done()
+}
+
+func (connection *Connection) LineScanner(reader io.Reader, successCb func(line *[]byte), errorCb func(error string) ){
+  lineScanner := bufio.NewScanner(reader)
   lineScanner.Split(bufio.ScanLines)
   buf := make([]byte, LineBufferSize)
   lineScanner.Buffer(buf, LineBufferSize)
   for lineScanner.Scan() {
     line := lineScanner.Bytes()
+    line = append(line,"\n"...)
     if !AssumeJson || json.Valid(line) {
-      connection.writer.Write(append(line,"\n"...))
+      successCb(&line)
     } else {
-      log.Printf("ReadoutFile %s invalid JSON",filename)
+      errorCb("invalid JSON",)
     }
   }
 }
 
-// func (connection *Connection) LineWriter() {
-//   connection.writeTo = true
-// }
+func (connection *Connection) LineWriter() {
+  for {
+    line := <-connection.writechan
+    connection.WriteLineRaw(line)
+  }
+}
+
+func (connection *Connection) WriteLine(line *[]byte) {
+  if connection.writable {
+    connection.wg.Add(1)
+    connection.writechan <- line
+    connection.wg.Done()
+  }
+}
+
+func (connection *Connection) WriteLineRaw(line *[]byte) {
+  if connection.writable {
+    _, err := connection.writer.Write(*line)
+    if err != nil {
+      log.Printf("write error:", err)
+      connection.writable = false
+      defer connection.Clean()
+      return
+    }
+  }
+}
+
+
+func ConnectionsWriteLine(line *[]byte, sourceConnection *Connection) {
+  for e := connectionsList.Front(); e != nil; e = e.Next() {
+    connection := e.Value.(*Connection)
+    if connection != sourceConnection || EchoLines {
+      connection.WriteLine(line)
+    }
+  }
+}
+
+func (connection *Connection) Clean() {
+  //log.Println("Clean",connection.readable, connection.writable)
+  if !connection.readable && !connection.writable {
+    connectionsList.Remove(connection.listElement)
+  }
+}
