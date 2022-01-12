@@ -112,19 +112,22 @@ func WriteConnection(writer io.Writer)(connection *Connection) {
 func ReadWriteConnection(reader io.Reader, writer io.Writer)(connection *Connection) {
   connection = &Connection{reader:reader,readable:true,writer:writer,writable:true,writechan: make(chan *[]byte)}
   connection.listElement = connectionsList.PushBack(connection)
-  connection.wg.Add(1)
+  connection.wg.Add(2)
   go connection.LineReader()
   if ReadoutFileOnConnect != "" {
     connection.ReadoutFile(ReadoutFileOnConnect)
   }
   go connection.LineWriter()
+  connection.wg.Done()
   return connection
 }
 
 func (connection *Connection) LineReader() {
   connection.LineScanner(connection.reader,
     func (line *[]byte){
+      connection.wg.Add(1)
       ConnectionsWriteLine(line,connection)
+      connection.wg.Done()
     },
     func (error string){
       log.Printf("error LineReader: %s",error)
@@ -171,6 +174,7 @@ func (connection *Connection) LineWriter() {
   for {
     line := <-connection.writechan
     connection.WriteLineRaw(line)
+    connection.wg.Done()
   }
 }
 
@@ -178,7 +182,6 @@ func (connection *Connection) WriteLine(line *[]byte) {
   if connection.writable {
     connection.wg.Add(1)
     connection.writechan <- line
-    connection.wg.Done()
   }
 }
 
