@@ -74,7 +74,7 @@ check
 
 testcase 7 send some lines through a pipe with socat unidirectional
 ./solimux $tmp/sock &
-sleep 1
+sleep 0.1
 socat -u UNIX-CONNECT:$tmp/sock CREATE:$actual/lines &
 cat /dev/urandom | base64 | head -n 1024 | tee $expected/lines | socat -u STDIN UNIX-CONNECT:$tmp/sock
 killbg
@@ -83,34 +83,34 @@ check
 testcase 8 send some lines through a pipe with socat bidirectional
 cat /dev/urandom | base64 | head -n 1024 > $expected/b.out
 ./solimux $tmp/sock &
-sleep 1
-cat /dev/urandom | base64 | head -n 1024 | tee $expected/b.out | sh -c "sleep 1; cat" | socat UNIX-CONNECT:$tmp/sock STDIO > $actual/a.out &
-cat /dev/urandom | base64 | head -n 1024 | tee $expected/a.out | sh -c "sleep 1; cat" | socat UNIX-CONNECT:$tmp/sock STDIO > $actual/b.out &
-sleep 2
+sleep 0.1
+cat /dev/urandom | base64 | head -n 1024 | tee $expected/b.out | sh -c "sleep 0.1; cat" | socat UNIX-CONNECT:$tmp/sock STDIO > $actual/a.out &
+cat /dev/urandom | base64 | head -n 1024 | tee $expected/a.out | sh -c "sleep 0.1; cat" | socat UNIX-CONNECT:$tmp/sock STDIO > $actual/b.out &
+sleep 0.2
 kill %1
-sleep 1
+sleep 0.1
 killbg
 check
 
 testcase 9 file reader
 cat /dev/urandom | base64 | head -n 1024 > $expected/out
 ./solimux -file $expected/out $tmp/sock &
-sleep 1
+sleep 0.1
 socat -u UNIX-CONNECT:$tmp/sock STDOUT > $actual/out &
-sleep 1
+sleep 0.1
 kill %1
-sleep 1
+sleep 0.1
 killbg
 check
 
 testcase 10 echo socket
 cat /dev/urandom | base64 | head -n 1024 > $expected/out
 ./solimux -echo $tmp/sock &
-sleep 1
+sleep 0.1
 socat UNIX-CONNECT:$tmp/sock STDIO < $expected/out > $actual/out &
-sleep 1
+sleep 0.1
 kill %1
-sleep 1
+sleep 0.1
 killbg
 check
 
@@ -119,11 +119,11 @@ cat /dev/urandom | base64 | head -n 1 > $tmp/file
 cat /dev/urandom | base64 | head -n 1 > $tmp/in
 cat $tmp/file $tmp/in > $expected/out
 ./solimux -file $tmp/file -echo $tmp/sock &
-sleep 1
+sleep 0.1
 socat UNIX-CONNECT:$tmp/sock STDIO < $tmp/in > $actual/out &
-sleep 1
+sleep 0.1
 kill %1
-sleep 1
+sleep 0.1
 killbg
 check
 
