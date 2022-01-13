@@ -64,7 +64,10 @@ check
 
 testcase 5 handle bad json
 dd if=/dev/urandom bs=1k count=1024 status=none | jq -Rc > $expected/out
-begin echo bad-JSON-line; cat $expected/out; end | ./solimux -i -o -echo -json > $actual/out
+echo error LineReader: invalid JSON > $expected/err
+mkfifo $tmp/stderr.fifo
+cat $tmp/stderr.fifo | sed -E 's/[0-9]{4}\/[0-9]{2}\/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} //' > $actual/err &
+begin echo bad-JSON-line; cat $expected/out; end | ./solimux -i -o -echo -json > $actual/out 2> $tmp/stderr.fifo
 check
 
 testcase 6 deal with one very long line
