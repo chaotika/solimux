@@ -2,6 +2,14 @@
 
 go build ..
 
+function my_signal_handler --on-signal USR1
+  echo testcase \#$testn: $testcase
+  echo aborted: took to long
+    exit 2
+end
+
+set -g PID %self
+
 function clean
   if test -d $tmp
     rm -fd $expected/* $actual/* $tmp/*
@@ -10,13 +18,15 @@ function clean
 end
 
 function testcase
-  set testn $argv[1]
-  #echo test \#$testn $argv[2..-1]
+  set -g testn $argv[1]
+  set -g testcase $argv[2..-1]
+  #echo testcase \#$testn: $testcase
   set -g tmp tmp/$testn
   set -g expected $tmp/expected
   set -g actual $tmp/actual
   clean
   mkdir -p $tmp $expected $actual
+  sh -c "sleep 5; kill -USR1 $PID; exec kill `ps -o pid= --ppid $PID | grep -v \$\$`;" &
 end
 
 function killbg
@@ -26,10 +36,12 @@ function killbg
 end
 
 function check
+  killbg
   set expectedsha (sh -c "cd $expected; sha256sum *")
   set actualsha (sh -c "cd $actual; sha256sum *")
   if [ "$expectedsha" != "$actualsha" ]
-    #echo failed test \#$testn $argv[2..-1]
+    echo testcase \#$testn: $testcase
+    echo failed: has unexpected output
     #diff $expected $actual
     #bash -c "diff --side-by-side --suppress-common-lines <(xxd $expected) <(xxd $actual)"
     #cmp -b -l -n 64 $expected $actual
@@ -65,6 +77,7 @@ echo error LineReader: invalid JSON > $expected/err
 mkfifo $tmp/stderr.fifo
 cat $tmp/stderr.fifo | sed -E 's/[0-9]{4}\/[0-9]{2}\/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} //' > $actual/err &
 begin echo bad-JSON-line; cat $expected/out; end | ./solimux -i -o -echo -json > $actual/out 2> $tmp/stderr.fifo
+sleep 0.1
 check
 
 testcase 6 deal with one very long line
@@ -77,7 +90,6 @@ testcase 7 send some lines through a pipe with socat unidirectional
 sleep 0.1
 socat -u UNIX-CONNECT:$tmp/sock CREATE:$actual/lines &
 cat /dev/urandom | base64 | head -n 1024 | tee $expected/lines | socat -u STDIN UNIX-CONNECT:$tmp/sock
-killbg
 check
 
 testcase 8 send some lines through a pipe with socat bidirectional
@@ -87,9 +99,8 @@ sleep 0.1
 cat /dev/urandom | base64 | head -n 1024 | tee $expected/b.out | sh -c "sleep 0.1; cat" | socat UNIX-CONNECT:$tmp/sock STDIO > $actual/a.out &
 cat /dev/urandom | base64 | head -n 1024 | tee $expected/a.out | sh -c "sleep 0.1; cat" | socat UNIX-CONNECT:$tmp/sock STDIO > $actual/b.out &
 sleep 0.2
-kill %1
-sleep 0.1
-killbg
+kill %2
+sleep 0.3
 check
 
 testcase 9 file reader
@@ -98,9 +109,8 @@ cat /dev/urandom | base64 | head -n 1024 > $expected/out
 sleep 0.1
 socat -u UNIX-CONNECT:$tmp/sock STDOUT > $actual/out &
 sleep 0.1
-kill %1
+kill %2
 sleep 0.1
-killbg
 check
 
 testcase 10 echo socket
@@ -109,9 +119,8 @@ cat /dev/urandom | base64 | head -n 1024 > $expected/out
 sleep 0.1
 socat UNIX-CONNECT:$tmp/sock STDIO < $expected/out > $actual/out &
 sleep 0.1
-kill %1
+kill %2
 sleep 0.1
-killbg
 check
 
 testcase 11 use file reader with echo
@@ -122,9 +131,8 @@ cat $tmp/file $tmp/in > $expected/out
 sleep 0.1
 socat UNIX-CONNECT:$tmp/sock STDIO < $tmp/in > $actual/out &
 sleep 0.1
-kill %1
+kill %2
 sleep 0.1
-killbg
 check
 
 #set fish_trace 1
