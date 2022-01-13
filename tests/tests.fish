@@ -11,7 +11,7 @@ end
 
 function testcase
   set testn $argv[1]
-  echo test \#$testn $argv[2..-1]
+  #echo test \#$testn $argv[2..-1]
   set -g tmp tmp/$testn
   set -g expected $tmp/expected
   set -g actual $tmp/actual
@@ -28,17 +28,14 @@ end
 function check
   set expectedsha (sh -c "cd $expected; sha256sum *")
   set actualsha (sh -c "cd $actual; sha256sum *")
-  if [ "$expectedsha" = "$actualsha" ]
-    echo passed
-  else
-    echo failed
+  if [ "$expectedsha" != "$actualsha" ]
+    #echo failed test \#$testn $argv[2..-1]
     #diff $expected $actual
     #bash -c "diff --side-by-side --suppress-common-lines <(xxd $expected) <(xxd $actual)"
     #cmp -b -l -n 64 $expected $actual
     exit 1
   end
   clean
-  echo
 end
 
 testcase 1 word stdin
