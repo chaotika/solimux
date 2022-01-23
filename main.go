@@ -126,7 +126,7 @@ func (connection *Connection) LineReader() {
   connection.LineScanner(connection.reader,
     func (line *[]byte){
       connection.wg.Add(1)
-      ConnectionsWriteLine(line,connection)
+      connection.ConnectionsWriteLine(line)
       connection.wg.Done()
     },
     func (error string){
@@ -212,7 +212,7 @@ func (connection *Connection) WriteLineRaw(line *[]byte) {
 }
 
 
-func ConnectionsWriteLine(line *[]byte, sourceConnection *Connection) {
+func (sourceConnection *Connection) ConnectionsWriteLine(line *[]byte) {
   for e := connectionsList.Front(); e != nil; e = e.Next() {
     connection := e.Value.(*Connection)
     if connection != sourceConnection || EchoLines {
