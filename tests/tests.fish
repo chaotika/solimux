@@ -1,6 +1,10 @@
 #!/usr/bin/fish
 
-go build ..
+if not go build ..
+  echo failed: build error
+  exit 3
+end
+
 
 function my_signal_handler --on-signal USR1
   echo testcase \#$testn: $testcase
