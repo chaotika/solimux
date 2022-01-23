@@ -84,7 +84,7 @@ type Connection struct {
   id int64
   reader io.Reader
   readable bool
-	writer io.Writer
+	writer bufio.Writer
   writechan chan *[]byte
   writable bool
   wg sync.WaitGroup
@@ -100,7 +100,7 @@ func ReadConnection(reader io.Reader)(connection *Connection) {
 }
 
 func WriteConnection(writer io.Writer)(connection *Connection) {
-  connection = &Connection{writer:writer,writable:true,writechan: make(chan *[]byte)}
+  connection = &Connection{writer:*bufio.NewWriterSize(writer,LineBufferSize+1),writable:true,writechan: make(chan *[]byte)}
   connection.listElement = connectionsList.PushBack(connection)
   if ReadoutFileOnConnect != "" {
     connection.ReadoutFile(ReadoutFileOnConnect)
@@ -110,7 +110,7 @@ func WriteConnection(writer io.Writer)(connection *Connection) {
 }
 
 func ReadWriteConnection(reader io.Reader, writer io.Writer)(connection *Connection) {
-  connection = &Connection{reader:reader,readable:true,writer:writer,writable:true,writechan: make(chan *[]byte)}
+  connection = &Connection{reader:reader,readable:true,writer:*bufio.NewWriterSize(writer,LineBufferSize+1),writable:true,writechan: make(chan *[]byte)}
   connection.listElement = connectionsList.PushBack(connection)
   connection.wg.Add(2)
   go connection.LineReader()
@@ -161,7 +161,7 @@ func (connection *Connection) LineScanner(reader io.Reader, successCb func(line 
   lineScanner.Buffer(buf, LineBufferSize)
   for lineScanner.Scan() {
     line := lineScanner.Bytes()
-    line = append(line,"\n"...)
+    //line = append(line,"\n"...)
     if !AssumeJson || json.Valid(line) {
       successCb(&line)
     } else {
@@ -189,7 +189,21 @@ func (connection *Connection) WriteLineRaw(line *[]byte) {
   if connection.writable {
     _, err := connection.writer.Write(*line)
     if err != nil {
-      log.Printf("write error:", err)
+      log.Printf("write line error:", err)
+      connection.writable = false
+      defer connection.Clean()
+      return
+    }
+    _, err = connection.writer.WriteString("\n")
+    if err != nil {
+      log.Printf("write newline error:", err)
+      connection.writable = false
+      defer connection.Clean()
+      return
+    }
+    err = connection.writer.Flush()
+    if err != nil {
+      log.Printf("flush error:", err)
       connection.writable = false
       defer connection.Clean()
       return
