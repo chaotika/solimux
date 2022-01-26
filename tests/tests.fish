@@ -59,9 +59,9 @@ echo test | tee $expected/out \
   | ./solimux -i -o -echo > $actual/out
 check
 
-testcase 2 multiline random base64 stdin
+testcase 2 multiline random base64 stdin with a small linebuf
 dd if=/dev/urandom bs=1k count=1 status=none | base64 | tee $expected/out \
-   | ./solimux -i -o -echo > $actual/out
+  | ./solimux -i -o -echo -linebuf 77 > $actual/out
 check
 
 testcase 3 multiline random stdin
@@ -89,16 +89,16 @@ dd if=/dev/urandom bs=1k count=1024 status=none | jo line=%- | tee $expected/out
   | ./solimux -i -o -echo -json -linebuf 2097152 > $actual/out
 check
 
-testcase 7 send some lines through a pipe with socat unidirectional
-./solimux $tmp/sock &
+testcase 7 send some lines through a pipe with socat unidirectional with a small linebuf
+./solimux -linebuf 77 $tmp/sock &
 sleep 0.1
 socat -u UNIX-CONNECT:$tmp/sock CREATE:$actual/lines &
 cat /dev/urandom | base64 | head -n 1024 | tee $expected/lines | socat -u STDIN UNIX-CONNECT:$tmp/sock
 check
 
-testcase 8 send some lines through a pipe with socat bidirectional
+testcase 8 send some lines through a pipe with socat bidirectional with a small linebuf
 cat /dev/urandom | base64 | head -n 1024 > $expected/b.out
-./solimux $tmp/sock &
+./solimux -linebuf 77 $tmp/sock &
 sleep 0.1
 cat /dev/urandom | base64 | head -n 1024 | tee $expected/b.out | sh -c "sleep 0.1; cat" | socat UNIX-CONNECT:$tmp/sock STDIO > $actual/a.out &
 cat /dev/urandom | base64 | head -n 1024 | tee $expected/a.out | sh -c "sleep 0.1; cat" | socat UNIX-CONNECT:$tmp/sock STDIO > $actual/b.out &
