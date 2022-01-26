@@ -12,37 +12,35 @@ import (
   "container/list"
 )
 
-const (
-	MaxScanTokenSize = 1024 * 1024
-)
-var EchoLines bool
-var StdIn bool
-var StdOut bool
-var LineBufferSize int
-var AssumeJson bool
-var RunForever bool
-var ReadoutFileOnConnect string
-
+var Config struct {
+  EchoLines bool
+  StdIn bool
+  StdOut bool
+  LineBufferSize int
+  AssumeJson bool
+  RunForever bool
+  ReadoutFileOnConnect string
+}
 var connectionsList *list.List
 
 func main() {
-  flag.BoolVar(&EchoLines, "echo", false, "echo lines back to sender")
-  flag.BoolVar(&StdIn, "i", false, "read from stdin")
-  flag.BoolVar(&StdOut, "o", false, "output all lines on stdout")
-  flag.IntVar(&LineBufferSize, "linebuf", MaxScanTokenSize, "line buffer size in bytes")
-  flag.BoolVar(&AssumeJson, "json", false, "verify every line to be valid JSON")
-  flag.BoolVar(&RunForever, "forever", false, "do not end program when stdin is closed")
-  flag.StringVar(&ReadoutFileOnConnect, "file", "", "read out file on connection")
+  flag.BoolVar(&Config.EchoLines, "echo", false, "echo lines back to sender")
+  flag.BoolVar(&Config.StdIn, "i", false, "read from stdin")
+  flag.BoolVar(&Config.StdOut, "o", false, "output all lines on stdout")
+  flag.IntVar(&Config.LineBufferSize, "linebuf", 1024 * 1024, "line buffer size in bytes")
+  flag.BoolVar(&Config.AssumeJson, "json", false, "verify every line to be valid JSON")
+  flag.BoolVar(&Config.RunForever, "forever", false, "do not end program when stdin is closed")
+  flag.StringVar(&Config.ReadoutFileOnConnect, "file", "", "read out file on connection")
   flag.Parse()
 
   connectionsList = list.New()
 
   var stdioConnection *Connection
-  if StdOut && StdIn {
+  if Config.StdOut && Config.StdIn {
     stdioConnection = ReadWriteConnection(os.Stdin,os.Stdout)
-  } else if !StdOut && StdIn {
+  } else if !Config.StdOut && Config.StdIn {
     stdioConnection = ReadConnection(os.Stdin)
-  } else if StdOut && !StdIn {
+  } else if Config.StdOut && !Config.StdIn {
     stdioConnection = WriteConnection(os.Stdout)
   }
 
@@ -50,7 +48,7 @@ func main() {
     go NetListenServer("unix",SocketPath)
   }
 
-  if StdIn && !RunForever {
+  if Config.StdIn && !Config.RunForever {
     stdioConnection.wg.Wait()
   } else {
     select{ } // wait forever
@@ -100,22 +98,22 @@ func ReadConnection(reader io.Reader)(connection *Connection) {
 }
 
 func WriteConnection(writer io.Writer)(connection *Connection) {
-  connection = &Connection{writer:*bufio.NewWriterSize(writer,LineBufferSize+1),writable:true,writechan: make(chan *[]byte)}
+  connection = &Connection{writer:*bufio.NewWriterSize(writer,Config.LineBufferSize),writable:true,writechan: make(chan *[]byte)}
   connection.listElement = connectionsList.PushBack(connection)
-  if ReadoutFileOnConnect != "" {
-    connection.ReadoutFile(ReadoutFileOnConnect)
+  if Config.ReadoutFileOnConnect != "" {
+    connection.ReadoutFile(Config.ReadoutFileOnConnect)
   }
   go connection.LineWriter()
   return connection
 }
 
 func ReadWriteConnection(reader io.Reader, writer io.Writer)(connection *Connection) {
-  connection = &Connection{reader:reader,readable:true,writer:*bufio.NewWriterSize(writer,LineBufferSize+1),writable:true,writechan: make(chan *[]byte)}
+  connection = &Connection{reader:reader,readable:true,writer:*bufio.NewWriterSize(writer,Config.LineBufferSize),writable:true,writechan: make(chan *[]byte)}
   connection.listElement = connectionsList.PushBack(connection)
   connection.wg.Add(2)
   go connection.LineReader()
-  if ReadoutFileOnConnect != "" {
-    connection.ReadoutFile(ReadoutFileOnConnect)
+  if Config.ReadoutFileOnConnect != "" {
+    connection.ReadoutFile(Config.ReadoutFileOnConnect)
   }
   go connection.LineWriter()
   connection.wg.Done()
@@ -157,12 +155,11 @@ func (connection *Connection) ReadoutFile(filename string) {
 func (connection *Connection) LineScanner(reader io.Reader, successCb func(line *[]byte), errorCb func(error string) ){
   lineScanner := bufio.NewScanner(reader)
   lineScanner.Split(bufio.ScanLines)
-  buf := make([]byte, LineBufferSize)
-  lineScanner.Buffer(buf, LineBufferSize)
+  buf := make([]byte, Config.LineBufferSize*2)
+  lineScanner.Buffer(buf, Config.LineBufferSize)
   for lineScanner.Scan() {
     line := lineScanner.Bytes()
-    //line = append(line,"\n"...)
-    if !AssumeJson || json.Valid(line) {
+    if !Config.AssumeJson || json.Valid(line) {
       successCb(&line)
     } else {
       errorCb("invalid JSON",)
@@ -215,7 +212,7 @@ func (connection *Connection) WriteLineRaw(line *[]byte) {
 func (sourceConnection *Connection) ConnectionsWriteLine(line *[]byte) {
   for e := connectionsList.Front(); e != nil; e = e.Next() {
     connection := e.Value.(*Connection)
-    if connection != sourceConnection || EchoLines {
+    if connection != sourceConnection || Config.EchoLines {
       connection.WriteLine(line)
     }
   }
